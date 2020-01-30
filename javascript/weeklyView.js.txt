@@ -1,0 +1,575 @@
+/**
+ *
+ * This file manipulates the student calendar contained on the eLion
+ * student schedule page.  The calendar functionality is provided by
+ * FullCalendar.js.
+ *
+ * @summary FullCalendar manipulation functions.
+ * @author MJBoldin <mjb160@psu.edu>
+ */
+
+var startTime = '08:00:00';
+var endTime = '22:00:00';
+var timezoneEastern = 'America/New_York';
+var momentFormat = 'YYYY-MM-DD HH:mm:ss Z';
+
+var yearStartIndex = 0;
+var yearEndIndex = 4;
+var monthStartIndex = 5;
+var monthEndIndex = 7;
+var dateStartIndex = 8;
+var dateEndIndex = 10;
+var hourStartIndex = 11;
+var houreEndIndex = 13;
+var minuteStartIndex = 14;
+var minuteEndIndex = 16;
+
+var cal;
+var calEvents;
+
+var startMonth;
+var startDay;
+var startYear;
+var startDate;
+var timezoneStr;
+
+var weekStartDateStr;
+var weekEndDateStr;
+var weekCurrentDateStr;
+var weekCalDateStr;
+var weekCurrentDate;
+var weekCalendarDate;
+
+/**
+ * Performs on document ready.
+ */ 
+jQuery(document).ready(function() {
+	renderCalendar();
+
+    // determine the timezone
+	var timeZoneDiv = document.getElementById('weeklyViewForm:timeZoneDiv');
+	
+    // if timeZoneDiv not set on page, set as default
+    timezoneStr = jstz.determine().name();
+	if (timeZoneDiv != null) {
+		setTimezone(timezoneStr);
+	}
+
+	// Required to make sure calendar is rendered via fullcalendar AFTER
+	// bootstrap finishes rendering the tab
+	jQuery('#weeklyViewTab').on('shown.bs.tab', function(e) {
+		jQuery('#calendar').fullCalendar('render');
+	});
+
+    // previous day button clicked and not disabled
+	jQuery('#calendar .fc-prev-button').click(function() {
+		if (jQuery('.fc-prev-button').hasClass('fc-state-disabled') == false) {
+			renderNextDay();
+		}
+	});
+
+    // next day button clicked and not disabled
+	jQuery('#calendar .fc-next-button').click(function() {
+		if (jQuery('.fc-next-button').hasClass('fc-state-disabled') == false) {
+			renderNextDay();
+		}
+	});
+
+    // today button clicked and not disabled
+	jQuery('#calendar .fc-today-button').click(function() {
+        if (jQuery('.fc-today-button').hasClass('fc-state-disabled') == 
+            false) {
+			goToCurrentDayOfWeek();
+		}
+	});
+
+    // week view button clicked
+	jQuery('#calendar .fc-agendaWeek-button').click(function() {
+		updateWidgetState('right', 'hide');
+		disableButton('today');
+		disableAgendaButton('agendaWeek');
+		enableButton('agendaDay');
+	});
+
+    // day view button clicked
+	jQuery('#calendar .fc-agendaDay-button').click(function() {
+		updateWidgetState('right', 'show');
+		goToCurrentDayOfWeek();
+		disableAgendaButton('agendaDay');
+		enableButton('agendaWeek');
+	});
+});
+
+/**
+ * Renders the calendar with the necessary calculated parameters.
+ */ 
+function renderCalendar() {
+    // retrieve page values
+	var gFormName = jQuery('#weeklyViewForm').attr('name');
+	var weekStartDate = jQuery('#' + gFormName).find(
+			':input[name=weekStartDate]').val();
+    var weekData = jQuery('#' + gFormName).find(':input[name=weekData]').val();
+	var serverTimezoneOffset = jQuery('#' + gFormName).find(
+			':input[name=serverTimezoneOffset]').val();
+
+    // calculate the week start date if necessary
+	if (weekStartDate != null) {
+		startMonth = weekStartDate.substring(0, 2);
+		startDay = weekStartDate.substring(3, 5);
+		startYear = weekStartDate.substring(6, 10);
+		startDate = new Date(startYear, startMonth - 1, startDay, 0, 0);
+
+		calculateWeekParameters();
+	}
+
+    // week data view
+	if (weekData != null) {
+		calEvents = [];
+        
+        // load stored week data for events
+        var xmlDoc;
+		if (window.DOMParser) {
+			parser = new DOMParser();
+			xmlDoc = parser.parseFromString(weekData, 'text/xml');
+		} else {
+			xmlDoc = new ActiveXObject('Microsoft.XMLDOM');
+			xmlDoc.async = 'false';
+			xmlDoc.loadXML(weekData);
+		}
+
+		// generate events
+        eventTags = xmlDoc.getElementsByTagName('EVENT');
+
+		for (var i = 0; i < eventTags.length; i++) {
+			var event = xmlDoc.getElementsByTagName('EVENT')[i];
+            var idStr = event.getElementsByTagName('ID')[0].childNodes[0]
+                .nodeValue;
+            var titleStr = event.getElementsByTagName('TITLE')[0].childNodes[0]
+                .nodeValue;
+            var startStr = event.getElementsByTagName('START')[0]
+                .childNodes[0].nodeValue;
+            var endStr = event.getElementsByTagName('END')[0]
+                .childNodes[0].nodeValue;
+
+			var startStrEastern = startStr;
+			var endStrEastern = endStr;
+			if (timezoneStr != timezoneEastern) {
+                startStrEastern = convertDateToEastern(startStr, 
+                    serverTimezoneOffset);
+                endStrEastern = convertDateToEastern(endStr, 
+                    serverTimezoneOffset);
+			}
+
+			var startDateISO = convertDateToISO(startStr);
+			var endDateISO = convertDateToISO(endStr);
+
+			var newStartDateISO = new Date(startDateISO);
+            // if in a browser that cannot convert iso dates (ex. IE),
+            // convert the start date
+			if (isNaN(newStartDateISO)) {
+				newStartDateISO = convertISOStringToDate(startDateISO);
+			}
+
+			var newEndDateISO = new Date(endDateISO);
+            // if in a browser that cannot convert iso dates (ex. IE),
+            // convert the end date
+			if (isNaN(newEndDateISO)) {
+				newEndDateISO = convertISOStringToDate(endDateISO);
+			}
+
+			var colorTag = event.getElementsByTagName('COLOR')[0];
+
+			// build start & end moments for events
+			var startMoment = moment(newStartDateISO);
+			var endMoment = moment(newEndDateISO);
+
+            // add event current event, use color if necessary
+			if (colorTag != null) {
+                var colorStr = event.getElementsByTagName('COLOR')[0]
+                    .childNodes[0].nodeValue;
+				calEvents.push({
+					id : idStr,
+					title : titleStr,
+					allDay : false,
+					start : startMoment,
+					end : endMoment,
+					color : colorStr
+				});
+			} else {
+				calEvents.push({
+					id : idStr,
+					title : titleStr,
+					allDay : false,
+					start : startMoment,
+					end : endMoment
+				});
+			}
+		}
+	}
+
+    // render calendar with events
+	cal = jQuery('#calendar').fullCalendar({
+		lang : 'en',
+		buttonIcons : {
+			prev : 'left-single-arrow',
+			next : 'right-single-arrow',
+		},
+		weekNumbers : false,
+		editable : false,
+		firstDay : 1,
+		allDaySlot : false,
+		slotDuration : '00:15:00',
+		header : {
+			left : 'agendaWeek agendaDay',
+			center : '',
+			right : 'prev today next'
+		},
+		defaultView : 'agendaWeek',
+		columnFormat : {
+			week : 'dddd',
+			day : 'dddd'
+		},
+		buttonText : {
+			today : 'Today',
+			agendaWeek : 'Week',
+			agendaDay : 'Day'
+		},
+		minTime : startTime,
+		maxTime : endTime,
+		axisFormat : 'h:mmA',
+		timezone : timezoneEastern,
+		viewRender : function(view, element) {
+			updateDate();
+			updateHeader();
+		},
+		loading : function(isLoading, view) {
+			if (!isLoading) {
+				updateDate();
+				updateHeader();
+			}
+		},
+		defaultDate : moment(startYear + '-' + startMonth + '-' + startDay),
+		timeFormat : {
+			agenda : 'h:mmA'
+		},
+		height : 'auto',
+		contentHeight : 'auto',
+		events : calEvents,
+		// allow html tags in title
+		eventRender : function(event, element) {
+			element.find('.fc-title').html(event.title);
+		}
+	});
+
+    // determine calendr view and update calendar displayed if necessary
+	var view = jQuery('#calendar').fullCalendar('getView');
+	if (view.name == 'agendaWeek') {
+		updateWidgetState('right', 'hide');
+		disableAgendaButton('agendaWeek');
+	}
+}
+
+/**
+ * Determines the parameters for the week view.
+ */
+function calculateWeekParameters() {
+	// determine semester week start date
+	weekStartDateStr = startDate.getMonth() + '/'
+			+ ('0' + startDate.getDate()).slice(-2) + '/'
+			+ startDate.getFullYear();
+
+	// determine semester week end date
+	var end = new Date(startDate);
+	end.setDate(startDate.getDate() + 6);
+	weekEndDateStr = end.getMonth() + '/'
+			+ ('0' + end.getDate()).slice(-2) + '/' + end.getFullYear();
+
+	// determine current day of week
+	// for defaulting to the initial day of week viewed
+	var now = new Date();
+	weekCurrentDate = new Date(startDate);
+	weekCurrentDate.setDate(startDate.getDate() + (now.getDay() - 1));
+	weekCurrentDateStr = weekCurrentDate.getMonth() + '/'
+			+ ('0' + weekCurrentDate.getDate()).slice(-2) + '/'
+			+ weekCurrentDate.getFullYear();
+
+	weekCalendarDate = new Date(weekCurrentDate);
+	weekCalDateStr = weekCurrentDateStr;
+}
+
+/**
+ * Sets calendar to next day of the week.
+ */
+function renderNextDay() {
+    // get calendaar view
+	var view = jQuery('#calendar').fullCalendar('getView');
+
+	// determine next displayed day
+	var startFormatted = view.start.format(momentFormat);
+	weekCalendarDate = new Date(parseFormattedMomentMonth(startFormatted) + '/'
+			+ parseFormattedMomentDay(startFormatted) + '/'
+			+ parseFormattedMomentYear(startFormatted));
+
+    weekCalDateStr = weekCalendarDate.getMonth() + '/'
+			+ ('0' + weekCalendarDate.getDate()).slice(-2) + '/'
+			+ weekCalendarDate.getFullYear();
+
+    // render calendar with next day as current day
+	jQuery('#calendar').fullCalendar('render');
+
+    // disable today button if necessary
+	if (weekCalDateStr == weekCurrentDateStr) {
+		disableButton('today');
+	}
+}
+
+/**
+ * Sets calendar to specific day of the week.
+ */
+function updateDate() {
+	var limitDate = startDate;
+	var view = jQuery('#calendar').fullCalendar('getView');
+
+    // update date limit if day view
+	if (view.name == 'agendaDay') {
+		limitDate = weekCalendarDate;
+	}
+
+	// update display if date is outside view
+	if (limitDate < view.start.format(momentFormat)
+			|| limitDate >= view.end.format(momentFormat)) {
+		jQuery('#calendar').fullCalendar('gotoDate', limitDate);
+	}
+}
+
+/**
+ * Updates the calendar header widgets.
+ */
+function updateHeader() {
+	var view = jQuery('#calendar').fullCalendar('getView');
+
+	var startFormatted = view.start.format(momentFormat);
+	var calCurrentDateSt = (parseFormattedMomentMonth(startFormatted) - 1)
+			+ '/'
+			+ parseFormattedMomentDay(startFormatted)
+			+ '/'
+			+ parseFormattedMomentYear(startFormatted);
+
+	// disable prev button?
+	if (weekStartDateStr == calCurrentDateSt) {
+		disableButton('prev');
+	} else {
+		enableButton('prev');
+	}
+
+	// disable next button?
+	if (weekEndDateStr == calCurrentDateSt) {
+		disableButton('next');
+	} else {
+		enableButton('next');
+	}
+
+	// disable today button?
+	if (weekCurrentDateStr == calCurrentDateSt) {
+		updateWidgetState('today', 'hide');
+		disableButton('today');
+	} else {
+		updateWidgetState('today', 'show');
+		enableButton('today');
+	}
+}
+
+/**
+ * Disbles the agenda button and performs any associated tasks.
+ * 
+ * @param {string} buttonName - Button widget name.
+ */
+function disableAgendaButton(buttonName) {
+	disableButton(buttonName);
+	deactivateButton(buttonName);
+}
+
+/**
+ * Sets an active button.
+ * 
+ * @param {string} buttonName - Button widget name.
+ */
+function activateButton(buttonName) {
+	jQuery('.fc-' + buttonName + '-button').addClass('fc-state-active');
+}
+
+/**
+ * Unsets an active button.
+ * 
+ * @param {string} buttonName - Button widget name.
+ */
+function deactivateButton(buttonName) {
+	jQuery('.fc-' + buttonName + '-button').removeClass('fc-state-active');
+}
+
+/**
+ * Disables a button.
+ * 
+ * @param {string} buttonName - Button widget name.
+ */
+function disableButton(buttonName) {
+	jQuery('.fc-' + buttonName + '-button').attr('disabled', 'disabled')
+			.addClass('fc-state-disabled');
+}
+
+/**
+ * Enables a button.
+ * 
+ * @param {string} buttonName - Button widget name.
+ */
+function enableButton(buttonName) {
+	jQuery('.fc-' + buttonName + '-button').removeAttr('disabled').removeClass(
+			'fc-state-disabled');
+}
+
+/**
+ * Determines the year of a formatted moment.
+ * 
+ * @param {string} formattedMoment - The formatted moment date.
+ * @return {string}  two digit year
+ */
+function parseFormattedMomentYear(formattedMoment) {
+	return formattedMoment.substring(yearStartIndex, yearEndIndex);
+}
+
+/**
+ * Determines the month of a formatted moment.
+ * 
+ * @param {string} formattedMoment - The formatted moment date.
+ * @return {string} two didgit month
+ */
+function parseFormattedMomentMonth(formattedMoment) {
+	return formattedMoment.substring(monthStartIndex, monthEndIndex);
+}
+
+/**
+ * Determines the day date of a formatted moment.
+ * 
+ * @param {string} formattedMoment - The formatted moment date.
+ * @return {string} two digit date
+ */
+function parseFormattedMomentDay(formattedMoment) {
+	return formattedMoment.substring(dateStartIndex, dateEndIndex);
+}
+
+/**
+ * Sets the calendar the current day of the week.
+ */
+function goToCurrentDayOfWeek() {
+	weekCalendarDate = new Date(weekCurrentDate);
+	weekCalDateStr = weekCurrentDateStr;
+	jQuery('#calendar').fullCalendar('gotoDate',
+			moment(weekCalDateStr).add('months', 1));
+	disableButton('today');
+}
+
+/**
+ * Shows/hides calendar component.
+ * 
+ * @param {string} widget - The widget component name.
+ * @param {string} state - The state of the widget.
+ */
+function updateWidgetState(widget, state) {
+	if (state == 'hide') {
+		jQuery('.fc-' + widget).hide();
+	} else {
+		jQuery('.fc-' + widget).show();
+	}
+}
+
+/** EVENT TIME CONVERSION FUNCTIONS */
+
+/**
+ * Converts client time data to server time zone data.
+ * 
+ * @param {string} dateString - The date string.
+ * @param {string} serverTimezoneOffset - The tine zone offset.
+ * @return {Object} current date converted to eastern time zone
+ */
+function convertDateToEastern(dateString, serverTimezoneOffset) {
+	var now = new Date(dateString);
+	var localTime = now.getTime();
+	var localOffset = now.getTimezoneOffset() * 60000;
+	var utc = localTime + localOffset;
+
+	var offset = serverTimezoneOffset;
+	var eastern = utc + (3600000 * offset);
+	return new Date(eastern);
+}
+
+/**
+ * Adjusts time to UTC, then ISO-8601 so that time zones are not an issue.
+ * 
+ * @param {string} dateString - The date string.
+ * @return {string} converted date and time
+ */
+function convertDateToISO(dateString) {
+	var dateStringCal = new Date(dateString);
+	var dateStringCalUTC = new Date(dateStringCal.toUTCString());
+	// test for ie since it doesn't include the toISOString method
+	var convertedDate;
+	if (!Date.prototype.toISOString) {
+		// ie does not seem to have built in convert to iso functionality
+		convertedDate = dateStringCalUTC.getUTCFullYear() + '-'
+				+ padDate(dateStringCalUTC.getUTCMonth() + 1) + '-'
+				+ padDate(dateStringCalUTC.getUTCDate()) + 'T'
+				+ padDate(dateStringCalUTC.getUTCHours()) + ':'
+				+ padDate(dateStringCalUTC.getUTCMinutes()) + ':'
+				+ padDate(dateStringCalUTC.getUTCSeconds()) + 'Z';
+	} else {
+		convertedDate = dateStringCalUTC.toISOString();
+	}
+
+	return convertedDate;
+}
+
+/**
+ * Converts ISO string to date in browsers that cannot new date and iso string.
+ * 
+ *  @param {string} isoString - The ISO date string.
+ *  @return {number} converted date and time
+ */
+function convertISOStringToDate(isoString) {
+	// remove leading '0' if exists then parse it
+    var year = parseInt(removeLeadingZero(isoString.substring(yearStartIndex, 
+        yearEndIndex)));
+	var month = parseInt(removeLeadingZero(isoString.substring(
+        monthStartIndex, monthEndIndex)));
+    var day = parseInt(removeLeadingZero(isoString.substring(dateStartIndex, 
+        dateEndIndex)));
+	var hour = parseInt(removeLeadingZero(isoString.substring(
+        hourStartIndex, hourEndIndex)));
+	var minute = parseInt(removeLeadingZero(isoString.substring(
+        minuteStartIndex, minuteEndIndex)));
+	var convertedDate = new Date(Date.UTC(year, month - 1, day, hour, minute));
+	return convertedDate;
+}
+
+/**
+ * Pad date if necessary
+ * 
+ * @param {number} dateNumber - A portion of a date.
+ * @return {string} padded date
+ */
+function padDate(dateNumber) {
+	return dateNumber < 10 ? '0' + dateNumber : dateNumber;
+}
+
+/**
+ * Removes leading '0' if exists.
+ * 
+ * @param {string} numberStr - The number with leading zeros.
+ * @return {string} stripped nummber
+ */
+function removeLeadingZero(numberStr) {
+    var tempNumber = numberStr;
+	if (tempNumber.substring(0, 1) == '0') {
+		tempNumber = tempNumber.substring(1, tempNumber.length);
+	}
+	return tempNumber;
+}

@@ -1,0 +1,364 @@
+/**
+ *
+ * This file contains the javascript form functions for ops creation.
+ *
+ * @summary Javascript functions for the create ops page.
+ * @author MJBoldin <raidersmj@yahoo.com>
+ */
+
+/** 
+ * NOTE: Needed to load a more recent version of jQuery and keep the older 
+ * version as to not break legacy PrimeFaces code.
+ * Select2 requires a more recent version of jQuery than was bundled in the 
+ * version of PrimeFaces that is currently being used by the system.
+ * jQuery refers to the Primefaces jQuery
+ * jQuery_331 refers to the newer jQuery for the select2
+ */
+var jQuery_331 = jQuery.noConflict();
+jQuery = jQueryOrig;
+
+var dialogData;
+
+/**
+ * Performs on document ready.
+ */ 
+jQuery(document).ready(function() {
+    initPage();
+});
+
+/**
+ * Page render tasks.
+ */
+function initPage() {
+    // delay displaying until page has rendered
+    jQuery('#createOperationForm\\:targetOrgDropDown').removeAttr("style");
+
+    // applies select2 format to org list
+    jQuery_331("#createOperationForm\\3a targetOrgDropDown").select2({
+        placeholder: "Select Orgs",
+        allowClear: true
+    });
+
+    // fix to prevent dropdown displaying when a selected option is cleared
+    jQuery_331("#createOperationForm\\3a targetOrgList").on(
+        'select2:unselecting', function(e) {
+        jQuery_331(this).data('unselecting', true);
+    }).on('select2:open', function(e) {
+        if (jQuery_331(this).data('unselecting')) {
+            jQuery_331(this).removeData('unselecting');
+            jQuery_331(this).select2('close');
+        }
+    });
+
+    // initialize the target org list type ahead multiselect
+    // get results from the organization search serach via the proxy servlet
+    jQuery_331('#createOperationForm\\3a targetOrgList').select2({
+        placeholder: "Select Target Organizations",
+        minimumInputLength: 3,
+        ajax: {
+            url: function (params) {
+                return '/helios/odinProxy?_path=target/organizations/search';
+            },
+            contentType: "application/x-www-form-urlencoded; charset=UTF-8",
+            type: 'GET',
+            dataType: 'json',
+            delay: 500,
+            data: function(params) {  
+                // perform search when data entered
+                document.getElementById(
+                    'createOperationForm:hiddenTargetSearchVal').value = 
+                    params.term;
+                // org list search term
+                return {
+                    q: params.term 
+                };
+            },
+            processResults: function (data) {  
+                // process results returned
+                if (data !== null && data.code === 200 && data.data !== null) {
+                    if (data.data.length > 0) {
+                        // hide add target popup button
+                        hideAddOrgButton();  
+                        // return specific type of data records
+                        var org = data.data.filter(function(dataItem) {
+                            return (dataItem.type === 'DTO/TCO' || 
+                                dataItem.type === 'Criminal' || 
+                                dataItem.type === 'Unknown');
+                        });
+
+                        // return data with data type added to end of name for 
+                        // display
+                        return {
+                            results: jQuery_331.map(org, function (item) {
+                                return {
+                                    text: item.name + " (" + item.type +")",
+                                    id: item.id,
+                                    origData: item
+                                }
+                            })
+                        };
+                    } else {
+                        // show add org popup button
+                        showAddOrgButton();
+                    }
+                }
+
+                // return empty results set
+                return {
+                    results: []
+                };
+            }
+        }
+    });
+}
+
+/**
+ * Display organization field data.
+ * 
+ * @param {Object} org - Retrieved organization data record.
+ */
+function loadOrg(org) {
+    jQuery_331('#addTargetOrgForm\\3a targetOrgId').val(org.id);
+    jQuery_331('#addTargetOrgForm\\3a targetOrgMmsi').val(org.mmsi);
+    jQuery_331('#origOrgType').html('(Orginal Type - ' + org.type + ')');
+    jQuery_331('#addTargetOrgForm\\3a targetOrgComments').val(org.comments);
+}
+
+/**
+ * Clear displayed organization form data.
+ * 
+ * @param {boolean} keepName - Flag used if name field should be cleared.
+ */
+function clearFormFields(clearName) {
+    if (clearName) {
+        jQuery_331('#addTargetOrgForm\\3a targetOrgName').val("");
+    }
+
+    // clear form values
+    jQuery_331('#addTargetOrgForm\\3a targetOrgId').val("");
+    jQuery_331('#addTargetOrgForm\\3a targetOrgMmsi').val("");
+    jQuery_331('#origOrgType').html('');
+    jQuery_331('#addTargetOrgForm\\3a targetOrgComments').val("");
+
+    // reset the save button to create and make sure it is visible
+    jQuery_331('#addTargetOrgForm\\3a targetOrgSaveBtn').html(
+        '<span class="ui-button-text">Create</span>');
+    showTargetSaveButton();
+
+    // hide the select button
+    hideTargetSelectButton();
+
+    // turn off listener
+    jQuery_331(".tgtOrgDiagField").off("change");
+
+    // hide displayed message
+    hideMessage();
+}
+
+/**
+ * Populates the target org name field.
+ */
+function fillInTargetOrgName() {
+    // retrieve hidden name value from form
+    var searchVal = document.getElementById(
+        'createOperationForm:hiddenTargetSearchVal').value;
+
+    // clear form fields
+    clearFormFields(true);
+
+    // update name form field
+    jQuery_331("#addTargetOrgForm\\3a targetOrgName").val(searchVal);
+
+    // move cursor to next form field
+    jQuery_331("#addTargetOrgForm\\3a targetOrgMmsi").focus();
+
+    // name field blur event call proxy to perform exact search
+    // get results from the exact organization search serach via the proxy 
+    // servlet
+    jQuery_331('#addTargetOrgForm\\3a targetOrgName').on('blur', function(evt) {
+        var orgName = evt.target.value;
+        if (orgName.length <= 0) {
+            dialogData = null;
+            clearFormFields(false);
+        } else {
+            jQuery_331.ajax({
+                url : '/helios/odinProxy?_path=target/organizations/' + 
+                        'search&exact=true&q=' + orgName,
+                method : 'GET'
+            })
+            .done(function(data) {processNameSearch(data);})
+            .fail(function(err, c) {console.log("Error: ", err, c)});
+        }
+    });
+}
+
+/**
+ * Processes returned exact name search data.
+ */
+function processNameSearch(data) {
+    // retrieve returned data
+    dialogData = data.data[0];
+
+    // no data returned, clear dialog data and clear form data
+    if (data.data.length === 0) {
+        dialogData = null;
+        clearFormFields(false);
+
+    } else if (data.data.length === 1) {
+        // get returned data record
+        dialogData = data.data[0];
+
+        // fill in data
+        clearFormFields(false);
+        loadOrg(data.data[0]);
+
+        // change button label and hide it until a modification has been made
+        jQuery_331('#addTargetOrgForm\\3a targetOrgSaveBtn').html(
+            '<span class="ui-button-text">Update</span>');
+        hideTargetSaveButton();
+
+        // show the select button
+        showTargetSelectButton();
+
+        // add on change event for classes
+        jQuery_331(".tgtOrgDiagField").on("change", function(evt) {
+            showTargetSaveButton();
+
+            // hide the select button
+            hideTargetSelectButton();
+        });
+
+    // more than 1 record found, clear dialog data and display alert
+    } else if (data.data.length > 1) {
+        dialogData = null;
+        alert("More than one target with that name has been found.");
+    }
+}
+
+/**
+ * Retrieves selected organization names from list and clicks save button.
+ */
+function getSelectedTargetNames() {
+    var result = [];
+    var selectedOrgIds = [];
+
+    // retrieve selected targets and check each target for type
+    jQuery_331("#createOperationForm\\3a targetOrgList").find(':selected').each(
+        function () {
+        selectedOrgIds.push(jQuery(this).val());
+    });
+
+    // automatically click the save button
+    jQuery("#createOperationForm\\3a operationSaveBtn").click();
+}
+
+/**
+ * Shows and sets a message to user.
+ * 
+ * @param {string} message - Message to be displayed.
+ */
+function showMessage(message) {
+    jQuery_331('#messageArea').text(message);
+    jQuery_331('#messageArea').css("visibility", "visible");
+    jQuery_331('#messageArea').css("display", "block");
+}
+
+/**
+ * Hides and resets displayed message.
+ */
+function hideMessage() {
+    jQuery_331('#messageArea').text("");
+    jQuery_331('#messageArea').css("visibility", "hidden");
+    jQuery_331('#messageArea').css("display", "none");
+}
+
+/**
+ * Cancels adding an organization.
+ */
+function cancelTargetAdd() {
+    // clear the hidden parameter, hide the add org button, hide the dialog
+    document.getElementById(
+        'createOperationForm:hiddenTargetSearchVal').value = "";
+    hideAddOrgButton();
+    addTargetOrgDialog.hide();
+}
+
+/**
+ * Add new target to list and select it.
+ * 
+ * @param {number} targetId - New target id.
+ * @param {string} targetName - New target name.
+ */
+function addSelectedOrganization(targetId, targetName) {
+    // add new target as option to list
+    var data = {
+        id: targetId,
+        text: targetName
+    };
+    var newOption = new Option(data.text, data.id, false, true);
+
+    // trigger new target selection and hide add button
+    jQuery_331("#createOperationForm\\3a targetOrgList").append(newOption)
+        .trigger('change');
+    hideAddOrgButton();
+}
+
+/**
+ * Shows target org add button.
+ */
+function showAddOrgButton() {
+    jQuery_331("#createOperationForm\\3a targetOrgAddButton").css(
+        "visibility", "visible");
+    jQuery_331("#createOperationForm\\3a targetOrgAddButton").css(
+        "display", "block");
+}
+
+/**
+ * Hides target org add button.
+ */
+function hideAddOrgButton() {
+    jQuery_331("#createOperationForm\\3a targetOrgAddButton").css(
+        "visibility", "hidden");
+    jQuery_331("#createOperationForm\\3a targetOrgAddButton").css(
+        "display", "none");
+}
+
+/**
+ * Shows target save button.
+ */
+function showTargetSaveButton() {
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSaveBtn").css(
+        "visibility", "visible");
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSaveBtn").css(
+        "display", "inline");
+}
+
+/**
+ * Hides target save button.
+ */
+function hideTargetSaveButton() {
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSaveBtn").css(
+        "visibility", "hidden");
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSaveBtn").css(
+        "display", "none");
+}
+
+/**
+ * Shows target select button.
+ */
+function showTargetSelectButton() {
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSelectBtn").css(
+        "visibility", "visible");
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSelectBtn").css(
+        "display", "inline");
+}
+
+/**
+ * Hides target select button.
+ */
+function hideTargetSelectButton() {
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSelectBtn").css(
+        "visibility", "hidden");
+    jQuery_331("#addTargetOrgForm\\3a targetOrgSelectBtn").css(
+        "display", "none");
+}

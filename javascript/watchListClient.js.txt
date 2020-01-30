@@ -1,0 +1,335 @@
+/**
+ *
+ * Client for React module that retrieves, updates, and creates watch list data
+ * records. It will be transpiled by babel for use by browsers.
+ *
+ * @summary Javascript functions for the watch list pages.
+ * @author MJBoldin <raidersmj@yahoo.com>
+ */
+
+ // Define callbacks for jsdocs
+
+ /**
+ * This callback type is called `showGrowlCallback` and is displayed as a global symbol.
+ *
+ * @callback showGrowlCallback
+ * @param {number} severityCode
+ * @param {string} responseMessage
+ * @param {Object} error
+ */
+
+/**
+ * This callback type is called `onSuccessCallback` and is displayed as a global symbol.
+ *
+ * @callback onSuccessCallback
+ * @param {Object} data
+ */
+
+import moment       from 'moment';
+
+import Severity     from '../lib/Severity';
+import Util         from "./Util";
+import Fields       from '../lib/Fields'
+
+const baseUrl = process.env.ODIN_PROXY === 'true' ? 
+                    '/helios/odinProxy?_path=' : '/odin/';
+
+/**
+ * Object that holds common client functions.
+ */
+const client = {
+    /**
+     * Retrieves watch lists from database.
+     * 
+     * @param {showGrowlCallback} showGrowl Callback that handles the response.
+     * @return {Array} list of watch lists
+     */
+    getWatchLists: function(showGrowl) {
+        const url = baseUrl + 'watch-list-management';
+
+        return fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+        })
+        .then(res => res.json()  // wait for full response before proceding
+            .then(data => {
+                returnedData = data.data;
+            })
+            .then( () => {
+                return returnedData;
+            })
+        )
+        .catch((err) => {
+            showGrowl(Severity.ERROR, 
+                'There was an error fetching watch lists.', err);
+        })
+    },
+    /**
+     * Verifies watch list name is unique.
+     * 
+     * @param {string} name - watch list name for comparison.
+     * @param {number} wlId -id of current watch list if it already exists.
+     * @param {Array} tempErrors -list of current errors.
+     * @param {onSuccessCallback} onSuccess Callback that updates the errors.
+     * @param {showGrowlCallback} showGrowl Callback that handles the response.
+     */
+    isWatchListNameUnique: function(name, wlId, tempErrors, onSuccess, 
+                                    showGrowl) {
+        const filter = 'name='+name+'&id='+wlId;
+        const url = process.env.ODIN_PROXY === 'true' ? baseUrl + 
+                'watch-list/isNameUnique&' + filter :
+                baseUrl + 'watch-list\\isNameUnique?' + filter;
+
+        return fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+        })
+        .then(res => res.json()
+            .then(data => {
+                returnedData = data.data;
+            })
+            .then( () => {
+                if (!returnedData) {
+                    tempErrors.displayNameError = true;
+                }
+
+                onSuccess(tempErrors);
+            })
+        )
+        .catch((err) => {
+            showGrowl(Severity.ERROR, 
+                'There was an error fetching watch lists by name ', name + 
+                ': ' + err);
+        })
+    },
+    /**
+     * Creates a new watch list.
+     * 
+     * @param {Object} rec - new watch list data.
+     * @param {onSuccessCallback} onSuccess Callback that updates the errors.
+     * @param {showGrowlCallback} showGrowl Callback that handles the response.
+     */
+    createWatchList: function(rec, onSuccess, showGrowl) {
+        let url = baseUrl + 'watch-list/';
+
+        return fetch(url, {
+            method: 'POST',
+            mode: 'cors',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(rec),
+        })
+        .then(res => res.json()
+            .then(handleErrors)
+            .then(data => {
+                entityData = data.data;
+                console.log('Watch list entry ' + entityData.name + ' (' + 
+                    entityData.id + ') create successful');
+            })
+            .then( () => {
+                onSuccess(entityData);
+            })
+        )
+        .catch((err) => {
+            showGrowl(Severity.ERROR, 'There was an error creating watch list.', 
+                rec.name + ': ' + err);
+        })
+    },
+    /**
+     * Updates a watch list.
+     * 
+     * @param {Object} rec - updated watch list data.
+     * @param {onSuccessCallback} onSuccess Callback that updates the errors.
+     * @param {showGrowlCallback} showGrowl Callback that handles the response.
+     */
+    updateWatchList: function(rec, onSuccess, showGrowl) {
+        let url = baseUrl + 'watch-list/'+rec.id;
+
+        return fetch(url, {
+            method: 'PUT',
+            mode: 'cors',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(rec),
+        })
+        .then(res => res.json()
+            .then(handleErrors)
+            .then(data => {
+                entityData = data.data;
+                console.log('Watch list entry ' + entityData.name + ' (' + 
+                    entityData.id + ') update successful');
+            })
+            .then( () => {
+                onSuccess(entityData);
+            })
+        )
+        .catch((err) => {
+            showGrowl(Severity.ERROR, 'There was an error updating watch list.', 
+                rec.name + ' (' + rec.id + '): ' + err);
+            return null;
+        })
+    },
+    /**
+     * Retrieves agencies from database.
+     * 
+     * @param {showGrowlCallback} showGrowl Callback that handles the response.
+     * @return {Array} list of agencies
+     */
+    getAgencies: function(showGrowl) {
+        const url = baseUrl + 'agency/type?q=watchList';
+
+        return fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+        })
+        .then(res => res.json()
+            .then(data => {
+                returnedData = generateSelectDataSet(data.data, Fields.AGENCIES).sort(function(a, b) {
+                    let x = a.label, y = b.label;
+                    if (typeof x == "string") {
+                        x = ("" + x).toLowerCase();
+                    }
+                    if (typeof y == "string") {
+                        y = ("" + y).toLowerCase();
+                    }
+                    return ((x < y) ? -1 : ((x > y) ? 1 : 0));
+                });
+            })
+            .then( () => {
+                return returnedData;
+            })
+        )
+        .catch((err) => {
+            showGrowl(Severity.ERROR, 'Error processing request to get watch list agencies.', err);
+        })
+    },
+    /**
+     * Retrieves persons from database.
+     * 
+     * @param {showGrowlCallback} showGrowl Callback that handles the response.
+     * @return {Array} list of persons
+     */
+    getTargetPois: function(name, selectedTargets, showGrowl) {
+        const url = baseUrl + 'target/persons/filter?q='+name;
+
+        return fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+        })
+        .then(res => res.json()
+            .then(data => {
+                let allTargets = generateSelectDataSet(data.data, 
+                    Fields.TARGET_POIS).sort(function(a, b) {
+                    let x = a.label, y = b.label;
+                    if (typeof x == "string") {
+                        x = ("" + x).toLowerCase();
+                    }
+                    if (typeof y == "string") {
+                        y = ("" + y).toLowerCase();
+                    }
+                    return ((x < y) ? -1 : ((x > y) ? 1 : 0));
+                });
+
+                // remove previously selectedTargets
+                returnedData = [];
+                for (let i = 0; i < allTargets.length; i++) {
+                    let found = false;
+                    for (let j = 0; !found && j < selectedTargets.length; j++) {
+                        if (allTargets[i].value === selectedTargets[j].value) {
+                            found = true;
+                        }
+                    }
+                    if (!found) {
+                        returnedData.push(allTargets[i]);
+                    }
+                }
+            })
+            .then( () => {
+                return returnedData;
+            })
+        )
+        .catch((err) => {
+            showGrowl(Severity.ERROR, 
+                'Error processing request to get Target POIs.', name + ': ' + 
+                err);
+        })
+    },
+};
+
+export default client;
+
+let returnedData  = [];
+let entityData = null;
+let flag = true;
+let watchLogData = {};
+
+/**
+ * Populates the select data sets.
+ * 
+ * @param {Object} data - Picklist data set.
+ * @param {string} dataType - Picklist data set type.
+ * @return {Object}
+ */
+let generateSelectDataSet = (data, dataType) => {
+    let results = [];
+    // if data exists
+    if (!Util.isEmpty(data)) {
+        // populate data for each select item
+        results = data.map(item => {
+            let l = {};
+            switch (dataType) {
+                case Fields.AGENCIES:
+                    l['label'] = item.agencyLongDesc;
+                    l['value'] = parseInt(item.agencyId);
+                    break;
+                case Fields.TARGET_POIS:
+                    l['label'] = item.knownName;
+                    l['value'] = parseInt(item.id);
+                    break;
+                default:
+                    // code block
+            }
+            return l;
+        });
+
+        // remove records with null labels
+        results = results.filter(item => {
+            return item.label !== null
+        });
+    }
+    return results;
+};
+
+/**
+ * Error handling.
+ * 
+ * @param {Object} response - Response data object.
+ * @return {Object} response object
+ * @throws {Error} 
+ */
+let handleErrors = (response) => {
+    if (response.errors !== null) {
+        throw Error(response.message);
+    }
+    return response;
+};
